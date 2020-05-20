@@ -1,0 +1,28 @@
+#!/bin/bash
+#SBATCH --account=def-srogers
+#SBATCH --job-name=SNPEFF
+#SBATCH --output=slurm-$SLURM_JOBID-SNPEFF
+#SBATCH --mail-user=james.bull@ucalgary.ca
+#SBATCH --mail-type=ALL
+#SBATCH --time=4:00:00
+#SBATCH --mem=32G
+
+## Set input and output directories 
+
+snpeffdir=~/projects/rrg-srogers/communal/ # need to run in this directory
+
+snpfile=~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini/Coho.bssnper.recode.vcf
+
+## Load required modules
+
+module purge
+
+module load snpeff
+
+## EFFICIENT PROCESS, DONT RUN FROM SCRATCH SPACE
+
+cd $snpeffdir
+
+java -Xmx32G -jar $EBROOTSNPEFF/snpEff.jar GCF_002021735.2_Okis_V2_genomic $snpfile -v > ~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini/Coho.bssnper.recode.snpeff.vcf
+
+java -Xmx32G -jar $EBROOTSNPEFF/snpEff.jar closest GCF_002021735.2_Okis_V2_genomic $snpfile -v > ~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini/Coho.bssnper.recode.snpeffCLOSEST.vcf

@@ -1,0 +1,67 @@
+#!/bin/bash
+#SBATCH --account=def-srogers
+#SBATCH --job-name=FASTQCMULTIQC_MiniCoho_PostTRIMMOMATIC
+#SBATCH --mail-user=james.bull@ucalgary.ca
+#SBATCH --mail-type=ALL
+#SBATCH --time=2:00:00
+#SBATCH --mem=2G
+
+## Set global variables for this script
+
+inputdir=~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini
+multiqcdir=~/projects/rrg-srogers/jbull/Software/MultiQC2
+
+## Load required modules
+
+module purge
+
+module load fastqc/0.11.8
+
+## Copy data to scratch (480GB SSD per node) and navigate there
+
+cp $inputdir/*trimgalore2* $SLURM_TMPDIR
+
+cd $SLURM_TMPDIR
+
+## Run fastqc for each set of reads
+
+mkdir 4_FastQC_TrimGalore 
+
+for i in *.fastq.gz;do
+	fastqc $i -o $SLURM_TMPDIR/4_FastQC_TrimGalore/
+done
+
+## Set up MultiQC if not currently installed
+# cd MultiQC/
+# python setup.py install
+
+## Load multqc and run
+
+source $multiqcdir/ENV/bin/activate
+
+cd $SLURM_TMPDIR/4_FastQC_TrimGalore/
+
+ls *1P* > 1P.list
+ls *2P* > 2P.list
+ls *1U* > 1U.list
+ls *2U* > 2U.list
+
+multiqc --file-list 1P.list --filename 1P_multiqc
+multiqc --file-list 2P.list --filename 2P_multiqc
+multiqc --file-list 1U.list --filename 1U_multiqc
+multiqc --file-list 2U.list --filename 2U_multiqc
+
+multiqc . --filename all_multiq
+
+## Copy output back, making output directory if it doesn't exist
+
+mkdir $inputdir/4_FastQC_TrimGalore
+
+cp -r * $inputdir/4_FastQC_TrimGalore 
+
+## Clean up scratch
+
+cd $SLURM_TMPDIR
+rm -r *
+
+## Profit!

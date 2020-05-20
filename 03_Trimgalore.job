@@ -1,0 +1,124 @@
+#!/bin/bash
+#SBATCH --account=def-srogers
+#SBATCH --job-name=TRIMGALORE_MiniCoho
+#SBATCH --mail-user=james.bull@ucalgary.ca
+#SBATCH --mail-type=ALL
+#SBATCH --time=4:00:00
+#SBATCH --mem=8G
+
+## Set global variables for this script
+
+inputdir=~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini
+trimgalore=~/projects/rrg-srogers/jbull/Software/TrimGalore/TrimGalore-0.6.5/trim_galore
+diversitytrimscript=~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini/Pipeline/trimRRBSdiversityAdaptCustomers.py
+cutadapt_virtualenv=~/projects/rrg-srogers/jbull/Software/CutAdapt/cutadapt-master/ENV/bin/activate
+
+## Load required modules
+
+module purge
+module load python/2.7.14
+
+## Copy data to scratch (480GB SSD per node)
+
+cp $inputdir/*.UMI.fastq.gz $SLURM_TMPDIR
+
+## Do the trimming
+
+cd $SLURM_TMPDIR
+
+n=1
+
+for i in *R1.UMI.fastq.gz;do
+	
+	## Define read 1 and read 2 files 
+	
+	j=$(echo $i | cut -d '_' -f1)
+	read1=$j\_R1.UMI.fastq.gz
+	read2=$j\_R2.UMI.fastq.gz
+	
+	echo "starting sample $n id $j"
+
+### Initial trimming
+
+	#this filters based on 35bp minimum length and quality of phred 20
+	
+	source $cutadapt_virtualenv
+	perl $trimgalore --paired --length 35 --retain_unpaired --quality 20 -a AGATCGGAAGAGC -a2 AAATCAAAAAAAC $read1 $read2
+	deactivate
+
+	#renaming, 1U/2U ided as "group1" to seperate from unpaired reads generated later in this pipeline step
+	mv $j\_R1.UMI_val_1.fq.gz $j\.UMI.trimgalore.1P.fastq.gz
+	mv $j\_R2.UMI_val_2.fq.gz $j\.UMI.trimgalore.2P.fastq.gz
+	mv $j\_R1.UMI_unpaired_1.fq.gz $j\.UMI.trimgalore.1U_group1.fastq.gz
+	mv $j\_R2.UMI_unpaired_2.fq.gz $j\.UMI.trimgalore.2U_group1.fastq.gz
+	
+### Trim off diversity bases (needs to come after trimmomatic as will also be on 3' end of read when read-through occurs) - loses reads with Ns in CGG/TGG site but <1% in checked files
+	
+	## Reads still paired
+	python $diversitytrimscript -1 $j.UMI.trimgalore.1P.fastq.gz -2 $j.UMI.trimgalore.2P.fastq.gz
+	mv $j.UMI.trimgalore.1P.fastq_trimmed.fq.gz $j.UMI.trimgalore.dediversified.1P.fastq.gz
+	mv $j.UMI.trimgalore.2P.fastq_trimmed.fq.gz $j.UMI.trimgalore.dediversified.2P.fastq.gz
+	
+	## Forward only reads
+	python $diversitytrimscript -1 $j.UMI.trimgalore.1U_group1.fastq.gz
+	mv $j.UMI.trimgalore.1U_group1.fastq_trimmed.fq.gz $j.UMI.trimgalore.dediversified.1U_group1.fastq.gz
+	
+	## Reverse only reads - need to dummy forward reads to get the script to handle these
+	cp $j.UMI.trimgalore.2U_group1.fastq.gz $j.UMI.trimgalore.2U_group1.2.fastq.gz
+	gunzip $j.UMI.trimgalore.2U_group1.2.fastq.gz
+	grep @ $j.UMI.trimgalore.2U_group1.2.fastq > ids ### "ids" NEEDS TO BE UNIQUE PER SCRIPT FOR THIS TO WORK ###
+	rm $j.UMI.trimgalore.2U_group1.2.fastq
+	while IFS= read -r line; do echo $line >> $j.UMI.trimgalore.2U_group1.dummy.fastq; echo "CGGTTTTTTTTTTTTTTT" >> $j.UMI.trimgalore.2U_group1.dummy.fastq; echo "+" >> $j.UMI.trimgalore.2U_group1.dummy.fastq; echo "HHHHHHHHHHHHHHHHHH" >> $j.UMI.trimgalore.2U_group1.dummy.fastq; done < ids	
+	gzip $j.UMI.trimgalore.2U_group1.dummy.fastq
+	python $diversitytrimscript -1 $j.UMI.trimgalore.2U_group1.dummy.fastq.gz -2 $j.UMI.trimgalore.2U_group1.fastq.gz
+	mv $j.UMI.trimgalore.2U_group1.fastq_trimmed.fq.gz $j.UMI.trimgalore.dediversified.2U_group1.fastq.gz
+	rm *dummy*
+	
+### Secondary trimming (accounts for bases lost to dediversification), paired reads and unpaired reads
+	
+	source $cutadapt_virtualenv
+	perl $trimgalore --paired --length 35 --retain_unpaired $j.UMI.trimgalore.dediversified.1P.fastq.gz $j.UMI.trimgalore.dediversified.2P.fastq.gz
+	
+	#renaming, 1U/2U ided as "group2" to seperate from unpaired reads generated earlier in this pipeline step
+	mv $j.UMI.trimgalore.dediversified.1P_val_1.fq.gz $j.UMI.trimgalore2.dediversified.1P.fastq.gz
+	mv $j.UMI.trimgalore.dediversified.2P_val_2.fq.gz $j.UMI.trimgalore2.dediversified.2P.fastq.gz
+	mv $j.UMI.trimgalore.dediversified.1P_unpaired_1.fq.gz $j.UMI.trimgalore2.dediversified.1U_group2.fastq.gz
+	mv $j.UMI.trimgalore.dediversified.2P_unpaired_2.fq.gz $j.UMI.trimgalore2.dediversified.2U_group2.fastq.gz
+	
+	perl $trimgalore --length 35 $j.UMI.trimgalore.dediversified.1U_group1.fastq.gz
+	mv $j.UMI.trimgalore.dediversified.1U_group1_trimmed.fq.gz $j.UMI.trimgalore2.dediversified.1U_group1.fastq.gz
+
+	perl $trimgalore --length 35 $j.UMI.trimgalore.dediversified.2U_group1.fastq.gz
+	mv $j.UMI.trimgalore.dediversified.2U_group1_trimmed.fq.gz $j.UMI.trimgalore2.dediversified.2U_group1.fastq.gz
+
+	deactivate
+	
+### Advance counter
+	
+	n=$(($n+1))
+
+done
+
+## Copy output back
+
+
+cp *.trimgalore2.* $inputdir
+cp *trimming_report* $inputdir/TrimGaloreReports
+
+## Clean up scratch
+
+cd $SLURM_TMPDIR
+rm -r *
+
+## Profit!
+ 
+
+
+
+
+
+
+
+
+
+

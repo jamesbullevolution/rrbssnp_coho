@@ -1,0 +1,62 @@
+#!/bin/bash
+#SBATCH --account=def-srogers
+#SBATCH --job-name=FASTQCMULTIQC_MiniCoho_Pre
+#SBATCH --mail-user=james.bull@ucalgary.ca
+#SBATCH --mail-type=ALL
+#SBATCH --time=2:00:00
+#SBATCH --mem=2G
+
+## Set global variables for this script
+
+inputdir=~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini
+multiqcdir=~/projects/rrg-srogers/jbull/Software/MultiQC2
+
+## Load required modules
+
+module purge
+
+module load fastqc/0.11.8
+
+## Copy data to scratch (480GB SSD per node) and navigate there
+
+cp $inputdir/*_R1.fastq.gz $SLURM_TMPDIR
+cp $inputdir/*_R2.fastq.gz $SLURM_TMPDIR
+
+cd $SLURM_TMPDIR
+
+## Run fastqc for each set of reads
+
+mkdir 1_FastQC 
+
+for i in *.fastq.gz;do
+	fastqc $i -o $SLURM_TMPDIR/1_FastQC/
+done
+
+## Set up MultiQC if not currently installed
+# cd MultiQC/
+# python setup.py install
+
+## Load multqc and run
+
+cd $multiqcdir
+
+source ENV/bin/activate
+
+cd $SLURM_TMPDIR/1_FastQC/
+
+multiqc .
+
+deactivate
+
+## Copy output back, making output directory if it doesn't exist
+
+mkdir $inputdir/1_FastQC 
+
+cp -r * $inputdir/1_FastQC 
+
+## Clean up scratch
+
+cd $SLURM_TMPDIR
+rm -r *
+
+## Profit!

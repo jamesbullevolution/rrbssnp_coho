@@ -1,0 +1,72 @@
+#!/bin/bash
+#SBATCH --account=def-srogers
+#SBATCH --job-name=UMITOOLS_EXTRACT_MiniCoho
+#SBATCH --mail-user=james.bull@ucalgary.ca
+#SBATCH --mail-type=ALL
+#SBATCH --time=2:00:00
+#SBATCH --mem=2G
+
+## Set global variables for this script
+
+inputdir=~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini
+multiqcdir=~/projects/rrg-srogers/jbull/Software/MultiQC2
+
+## Load required modules
+
+module purge
+
+module load python
+
+## Copy data to scratch (480GB SSD per node)
+
+cp $inputdir/*_R1.fastq.gz $SLURM_TMPDIR
+cp $inputdir/*_R2.fastq.gz $SLURM_TMPDIR
+mkdir $SLURM_TMPDIR/UMIs
+cp -r $inputdir/UMIs $SLURM_TMPDIR
+
+## Load virtual environment
+
+cd $multiqcdir
+
+source ENV/bin/activate
+
+## Perform UMI_TOOLS extraction
+
+cd $SLURM_TMPDIR
+
+n=1
+
+for i in *_R1.fastq.gz;do
+	
+	# Extract sample name
+	j=$(echo $i | cut -d '.' -f5 | cut -d '_' -f1)
+
+	echo "starting sample $n id $j"
+
+	# Define input files
+	read1=$(ls *.$j\_R1.fastq.gz)
+	read2=$(ls *.$j\_R2.fastq.gz)
+	umis=$(ls UMIs/*$j*)
+
+	# Process read 1
+	umi_tools extract -I $umis --bc-pattern=NNNNNN --read2-in=$read1 --stdout=out.out.gz --read2-out=${read1%.*.*}.UMI.fastq.gz
+
+	# Process read 2
+	umi_tools extract -I $umis --bc-pattern=NNNNNN --read2-in=$read2 --stdout=out.out.gz --read2-out=${read2%.*.*}.UMI.fastq.gz
+
+	n=$(($n+1))
+	
+done
+
+deactivate
+
+## Copy output back
+
+cp *.UMI.fastq.gz $inputdir
+
+## Clean up scratch
+
+cd $SLURM_TMPDIR
+rm -r *
+
+## Profit!

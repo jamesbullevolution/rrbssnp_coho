@@ -1,0 +1,78 @@
+#!/bin/bash
+#SBATCH --account=def-srogers
+#SBATCH --job-name=BSSNPER
+#SBATCH --output=slurm-$SLURM_JOBID-BSSNPER
+#SBATCH --mail-user=james.bull@ucalgary.ca
+#SBATCH --mail-type=ALL
+#SBATCH --time=4:00:00
+#SBATCH --mem=10G
+
+## Set input and output directories 
+
+inputdir=~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini
+bssnper=~/projects/rrg-srogers/jbull/Software/BSSnper/BS-Snper-master/BS-Snper.pl
+refnozip=~/projects/rrg-srogers/communal/CohoRef_OkisV2/GCF_002021735.2_Okis_V2_genomic.fa
+
+## Load required modules
+
+module purge
+
+module load vcftools
+module load tabix
+
+## Copy BAM files to scratch
+
+cp $inputdir/*.UMI.trimgalore2.dediversified.PE.bismark.deduped.bam $SLURM_TMPDIR
+
+cd $SLURM_TMPDIR
+
+## Run 
+
+for i in *.UMI.trimgalore2.dediversified.PE.bismark.deduped.bam; do
+	j=${i%.*.*.*.*.*.*.*}
+	perl $bssnper --fa $refnozip --input $SLURM_TMPDIR/$i --output $SLURM_TMPDIR/$j.bssnper.TEMP.vcf --methcg $j.methCG --methchg $j.methCHG --methchh $j.methCHH --minhetfreq 0.1 --minhomfreq 0.85 --minquali 15 --mincover 6 --maxcover 50 --minread2 2 --errorate 0.02 --mapvalue 20 >$SLURM_TMPDIR/$j.bssnper.raw.vcf 2>$SLURM_TMPDIR/$j.ERR.log
+
+	cp $SLURM_TMPDIR/$j.bssnper.raw.vcf $inputdir
+	cp $SLURM_TMPDIR/$j.ERR.log $inputdir
+done
+
+mkdir $inputdir/7b_BSSnper_Methcalls #Save meth calls
+cp *meth* $inputdir/7b_BSSnper_Methcalls
+
+## Combine VCF files
+
+rm *.TEMP.vcf
+
+for i in *.bssnper.raw.vcf;do
+	bgzip $i
+	tabix $i.gz
+done
+
+list=$(ls *.vcf.gz | sed -z 's/\n/ /g')
+
+vcf-merge $list > Coho.bssnper.raw.vcf
+
+cp Coho.bssnper.raw.vcf $inputdir
+
+## Inital filtering (5/6 samples present and with at least 3 reads each on average)
+
+vcftools --vcf Coho.bssnper.raw.vcf --out Coho.bssnper --max-missing 0.9 --min-meanDP 3 --maf 0.05 --recode
+grep -v "#" Coho.bssnper.recode.vcf > Coho.bssnper.recode.noheader.vcf
+
+cp Coho.bssnper.recode.vcf $inputdir
+cp Coho.bssnper.recode.noheader.vcf $inputdir
+
+## Inital filtering STRICT (all samples present and with at least 6 reads each on average)
+
+vcftools --vcf Coho.bssnper.raw.vcf --out Coho.bssnper.STRICT --max-missing 1 --min-meanDP 6 --maf 0.05 --recode
+grep -v "#" Coho.bssnper.STRICT.recode.vcf > Coho.bssnper.STRICT.recode.noheader.vcf
+
+cp Coho.bssnper.STRICT.recode.vcf $inputdir
+cp Coho.bssnper.STRICT.recode.noheader.vcf $inputdir
+
+## Clean up scratch
+
+cd $SLURM_TMPDIR
+rm -r *
+
+## Profit!

@@ -1,0 +1,80 @@
+#!/bin/bash
+#SBATCH --account=def-srogers
+#SBATCH --job-name=UMITOOLS_DEDUP
+#SBATCH --output=slurm-$SLURM_JOBID-UMITOOLS-DEDUP
+#SBATCH --mail-user=james.bull@ucalgary.ca
+#SBATCH --mail-type=ALL
+#SBATCH --time=5:00:00
+#SBATCH --mem=10G
+
+## Set input and output directories 
+
+inputdir=~/projects/rrg-srogers/jbull/RRBS_Coho_JKB2_mini
+multiqcdir=~/projects/rrg-srogers/jbull/Software/MultiQC2
+
+## Set up environment
+
+module purge
+module load python
+
+module load samtools
+module load bedtools
+
+## Copy data to local node (480GB SSD per node)
+
+cp $inputdir/*.UMI.trimgalore2.dediversified.PE.bismark.bam $SLURM_TMPDIR
+
+## Load virtual environment
+
+source $multiqcdir/ENV/bin/activate
+
+## Counter
+
+n=1
+
+mkdir $inputdir/6_DedupReports+Depths
+
+cd $SLURM_TMPDIR
+
+for i in *.UMI.trimgalore2.dediversified.PE.bismark.bam;do
+
+	#echo "starting sample $n id $i"
+	
+	j=${i%.*.*.*.*.*.*}
+	
+	# Process paired reads. First convert to sam then use sed to remove barcode IDS from read names (interfers with umi_tools) and then convert back to bam (using samtools sort). Index bam and then run deduplicating
+	samtools view -h -o $j.UMI.trimgalore2.dediversified.PE.bismark.sam $j.UMI.trimgalore2.dediversified.PE.bismark.bam
+	sed -i 's/_.:N:0:........//g' $j.UMI.trimgalore2.dediversified.PE.bismark.sam
+	samtools sort -o $j.UMI.trimgalore2.dediversified.PE.bismark.bam $j.UMI.trimgalore2.dediversified.PE.bismark.sam
+	rm $j.UMI.trimgalore2.dediversified.PE.bismark.sam
+	samtools index $j.UMI.trimgalore2.dediversified.PE.bismark.bam
+	umi_tools dedup -I $j.UMI.trimgalore2.dediversified.PE.bismark.bam --paired -S $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.bam --output-stats=$j.UMI.trimgalore2.dediversified.PE.bismark.deduped.stats
+	samtools index $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.bam
+	
+	# Calculate coverage (deduped)
+	bedtools genomecov -ibam $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.bam > $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.depth
+	grep -w genome $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.depth > $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.depth_genome
+
+	# Copy output back
+
+	cp $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.bam $inputdir
+	cp $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.bam.bai $inputdir
+	cp $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.stats_* $inputdir/6_DedupReports+Depths
+	cp $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.depth $inputdir/6_DedupReports+Depths
+	cp $j.UMI.trimgalore2.dediversified.PE.bismark.deduped.depth_genome $inputdir/6_DedupReports+Depths
+
+	# Advance counter
+	n=$(($n+1))
+	
+done
+
+## Close virtual environment
+
+deactivate
+
+## Clean up scratch
+
+cd $SLURM_TMPDIR
+rm -r *
+
+## Profit!
